@@ -61,8 +61,6 @@ Each run prints to stdout:
 
 > **Note:** `exact_mcr` (Exact-IDS-MC baseline) is present in the code but currently commented out in the active solver list since it has a longer runtime. Uncomment it at [MCR.py:602](MCR.py#L602) to reproduce the full three-curve comparison in Figures 3 and 4. Exact MCR is expensive and may not terminate for larger obstacle counts.
 
-> **Note:** File output is currently commented out ([MCR.py:704](MCR.py#L704)). Results go to stdout only.
-
 ---
 
 ### TOP — Figures 5 & 6
