@@ -156,44 +156,6 @@ def dijkstra_path(G, src, tgt, allowed_edges=set(), forbidden=set(), final=dict(
     path.reverse()
     return path
 
-class conf_solver_mapf(AnytimeAlgorithm):
-    def __init__(self, graph, queries, timeout=None, fast=False):
-        super().__init__(timeout)
-        self.graph = graph
-        self.queries = queries
-        self.fast = fast
-        self.kpaths = None
-        self.span = float('inf')
-
-    def _run(self):
-        allowed_edges = set(self.graph.edges)
-        queries = list()
-
-        if not self.fast:
-            for src, tgt in self.queries:
-                path = dijkstra_path(self.graph, src, tgt, allowed_edges)
-                pri = path[-1][1]
-                queries.append((pri, src, tgt))
-            queries.sort(reverse=False)
-        else:
-            queries = self.queries
-
-        self.kpaths = list()
-        forbidden = set()
-        span = 0
-        for query in queries:
-            src = query[-2]
-            tgt = query[-1]
-            path = dijkstra_path(self.graph, src, tgt, allowed_edges, forbidden)
-            span += path[-1][1]
-            self.kpaths.append(path)
-            forbidden.update(path)
-        self.span = span
-        return forbidden
-
-    def __str__(self):
-        return "CONF_SOLVER_MAPF_"+ ("FAST" if self.fast else "SLOW")
-
 class DD_VARIANT(Enum):
     VANILLA = 1
     TWOPHASE = 2
@@ -201,176 +163,6 @@ class DD_VARIANT(Enum):
     PROBDD = 5
     CDD = 6
     ONEMIN = 7
-
-class dd_solver_mapf(AnytimeAlgorithm):
-    def __init__(self, graph, queries, timeout=None, variant=DD_VARIANT.VANILLA):
-        super().__init__(timeout)
-        self.graph = graph
-        self.variant = variant
-        self.queries = queries
-        self.kpaths = None
-        self.span = float('inf')
-
-    def check(self, edges, src, tgt, forbidden):
-        return bfs(self.graph, src, tgt, edges, forbidden)
-
-    def onemin(self, start, end, forbidden, obstacles):
-        cur_obstacles = obstacles
-        t = self.check(cur_obstacles, start, end, forbidden)
-        for i, obstacle in tqdm(list(reversed(list(enumerate(obstacles))))):
-            cbar = list(cur_obstacles)
-            del cbar[i]
-            t = self.check(cbar, start, end, forbidden)
-            if t:
-                cur_obstacles = cbar
-
-        return cur_obstacles
-
-    # One Pass Delta Debugging
-    def opdd(self, start, end, forbidden, obstacles, n=2):
-        cur_obstacles = list(obstacles)
-        cur_result = cur_obstacles
-        t = self.check(cur_result, start, end, forbidden)
-        if self.result is None:
-            self.result = cur_result
-
-        while 1:
-            if n >= len(cur_obstacles):
-                return self.onemin(start, end, forbidden, cur_obstacles)
-
-            k, m = divmod(len(cur_obstacles), n)
-            # print("cur_n: ", n)
-
-            next_n = n
-
-            for i in tqdm(range(n-1, -1, -1)):
-                cbar = cur_obstacles[:i*k+min(i, m)] + cur_obstacles[(i+1)*k+min(i+1, m):]
-                t = self.check(cbar, start, end, forbidden)
-
-                if t:
-                    cur_obstacles = cbar
-                    next_n = next_n - 1
-
-
-            n = min(len(cur_obstacles), next_n * 2)
-
-    def dd(self, start, end, forbidden_vertices, allowed_edges):
-        top_func = None
-        if self.variant == DD_VARIANT.TWOPHASE:
-            top_func = self.twophase
-        elif self.variant == DD_VARIANT.OPDD:
-            top_func = self.opdd
-        elif self.variant == DD_VARIANT.ONEMIN:
-            top_func = self.onemin
-
-        t = self.check(allowed_edges, start, end, forbidden_vertices)
-        if not t:
-            return
-
-        edges = top_func(start, end, forbidden_vertices, allowed_edges)
-
-        cur = start
-        path = list()
-        while edges:
-            for edge in edges:
-                a, b = edge
-                if a == cur:
-                    path.append(edge)
-                    edges.remove(edge)
-                    cur = b
-                    break
-            else:
-                assert False
-        # print(start, end, edges, path)
-        return path
-
-
-    def _run(self):
-        allowed_edges = set(self.graph.edges)
-        paths = list()
-
-        for src, tgt in self.queries:
-            path = dijkstra_path(self.graph, src, tgt, allowed_edges)
-            pri = path[-1][1]
-            paths.append((pri, path))
-        paths.sort(reverse=False)
-
-        self.kpaths = list()
-        forbidden_vertices = set()
-        forbidden = set()
-        span = 0
-        for t, path in paths:
-            print("T", t)
-            src = path[0][0]
-            tgt = path[-1][0]
-
-            i = 0
-            while i < len(path):
-                if path[i] in forbidden:
-                    j = i+1
-                    while j < len(path) and (path[j] in forbidden or path[j][0] == path[i][0]):
-                        j += 1
-                    if j == len(path):
-                        end = tgt
-                    else:
-                        end = path[j][0]
-                    assert i != 0
-                    back = 1
-                    initial_index = i - 1
-                    start_index = i-back
-                    new_path = None
-                    cur_forbidden = set()
-                    while new_path is None and start_index != max(i-20, -1):
-                        print(back)
-                        while initial_index >= 0 and not all((path[initial_index][0], initial_index + k) not in forbidden for k in range(back)):
-                            initial_index -= 1
-                        if initial_index == -1:
-                            initial_index = 0
-                            assert False
-                        if all((node, k+back) not in forbidden for node, k in path[initial_index:j]):
-                            print('a')
-                            for k in range(0, back):
-                                path.insert(initial_index+k, (path[initial_index][0], initial_index+k))
-                            for k in range(initial_index+back, len(path)):
-                                path[k] = (path[k][0], k)
-                            new_path = path
-                            start_index = initial_index + back -1
-                            print(initial_index, back, i, j, path[i], path[i-1], path[i] in forbidden, len(path))
-                        else:
-                            start_index = i-back
-                            start = path[start_index][0]
-                            new_path = self.dd(start, end, forbidden_vertices | cur_forbidden, allowed_edges)
-                            # new_path = dijkstra_path(self.graph, start, end, allowed_edges, forbidden)
-                            # new_path = [node for node, _ in new_path]
-                            if new_path is not None:
-                                print('b', start, end, new_path, len(path))
-                                path[start_index:j+1] = [(node, 0) for node in new_path]
-                                for k in range(start_index+1, len(path)):
-                                    path[k] = (path[k][0], k)
-                            else:
-                                print('c', back, i, j, back)
-                                back += 1
-                        cur_forbidden.add(path[start_index+1][0])
-                        print(cur_forbidden)
-
-                    i = start_index
-
-                    # if new_path is None:
-                    #     assert path[i-1][1] == i - 1
-                    # else:
-                i += 1
-            # alt_path = dijkstra_path(self.graph, src, tgt, allowed_edges, forbidden)
-            # if alt_path[-1][1] < path[-1][1]:
-            #     path = alt_path
-            forbidden.update(path)
-            forbidden_vertices.update(v for v, _ in path)
-            self.kpaths.append(path)
-            span += path[-1][1]
-        self.span = span
-        return self.kpaths
-
-    def __str__(self):
-        return f"CONF_SOLVER_MAPF_{self.variant}"
 
 class dd_mapf(AnytimeAlgorithm):
     def __init__(self, graph, queries,
@@ -465,64 +257,8 @@ class dd_mapf(AnytimeAlgorithm):
 
             n = min(len(cur_obstacles), next_n * 2)
 
-    def twophase(self, cur_obstacles, removed=list(), _depth=0):
-        all_solns = set()
-        for _ in range(self.max_repeat):
-            cur_solns = list()
-            list_c = list(cur_obstacles)
-            while True:
-                t, kpaths, span = self.check(list_c + removed)
-                if not t:
-                    break
-                soln = self.opdd(list_c, removed=removed)
-                set_soln = frozenset(soln)
-                list_c = [x for x in list_c if x not in set_soln]
-                if set_soln not in all_solns:
-                    cur_solns.append((soln, span))
-                    all_solns.add((set_soln, span))
-
-            if _depth < self.max_depth:
-                all_soln = set()
-                all_soln = all_soln.union(*cur_solns)
-                list_c = [x for x in cur_obstacles if x not in all_soln]
-                for i, (soln, cur_span) in enumerate(list(cur_solns)):
-                    irreplaceable_deltas = self.opdd(soln, removed=list_c+removed)
-                    result = self.twophase(list_c, removed=irreplaceable_deltas+removed, _depth=_depth+1)
-                    t, kpaths, span = self.check(list_c + removed)
-                    if span < cur_span:
-                        cur_solns[i] = result + irreplaceable_deltas
-            random.shuffle(cur_obstacles)
-
-        return list(min(all_solns, key = lambda x: x[1])[0])
-
-    # def con_resolve(self, cur_obstacles):
-    #     allowed_edges = set(cur_obstacles)
-    #     kpaths = list()
-    #     for src, tgt in self.queries:
-    #         path = dijkstra_path(self.graph, src, tgt, allowed_edges)
-    #             return False
-    #         pri = path[-1][1]
-    #         kpaths.append((pri, path))
-    #     kpaths.sort(reverse=True)
-    #     actual_queries = self.queries
-    #     prev_edges = set()
-    #     prev_edges.update(kpaths[0][1])
-    #     for i, (pri, path) in enumerate(kpaths[1:], start=1):
-    #         set_path = set(path)
-    #         if set_path & prev_edges:
-
-
-    #     self.queries = actual_queries
-
-
     def _run(self):
-        top_func = None
-        if self.variant == DD_VARIANT.TWOPHASE:
-            top_func = self.twophase
-        elif self.variant == DD_VARIANT.OPDD:
-            top_func = self.opdd
-        elif self.variant == DD_VARIANT.ONEMIN:
-            top_func = self.onemin
+        top_func = self.opdd
 
         obstacles = [e for e in self.graph.edges]
         t, kpaths, span = self.check(list(obstacles))
@@ -640,26 +376,19 @@ if __name__ == '__main__' and False:
         for query in queries:
             denom += nx.shortest_path_length(graph, query[0], query[1])
         _ = mapf_func()
-        # print_kpaths(mapf_func.kpaths)
         verify_mapf(mapf_func.kpaths, queries)
-        # print(mapf_func.span)
         print(f"{i}, {denom}, {mapf_func.span}")
         filename = os.path.basename(file_path)
         file_stem, _ = os.path.splitext(filename)
         sys.stdout.flush()
-        # with open(OUT_DIR/f"{file_stem}.txt", 'a') as f:
-        #     f.write(f"{mapf_func.span},")
     print()
 
 # Convergence plot
 if __name__ == '__main__' and False:
-    # file_path = "./scenarios/maze-128-128-10-even-10.scen"
     file_path = "./scenarios/random-32-32-10-even-10.scen"
     (height, width), graph, real_queries = load_scenario(file_path)
     timeout = None
     print(len(real_queries))
-
-
 
     queries = real_queries[:100]
     mapf_func = dd_mapf(graph, queries, timeout, DD_VARIANT.OPDD, repeat=1)
@@ -668,22 +397,18 @@ if __name__ == '__main__' and False:
         denom += nx.shortest_path_length(graph, query[0], query[1])
     _ = mapf_func()
     sys.exit(0)
-    # print_kpaths(mapf_func.kpaths)
     verify_mapf(mapf_func.kpaths, queries)
-    # print(mapf_func.span)
     print(f"100, {denom}, {mapf_func.span}")
     filename = os.path.basename(file_path)
     file_stem, _ = os.path.splitext(filename)
     sys.stdout.flush()
-    # with open(OUT_DIR/f"{file_stem}.txt", 'a') as f:
-    #     f.write(f"{mapf_func.span},")
     print()
 
 if __name__ == '__main__':
     OUT_DIR = Path(sys.argv[1])
     def evaluate(file_path):
         (height, width), graph, queries = load_scenario(file_path)
-        timeout = None
+        timeout = 600
 
         queries = queries[:100]
 
@@ -693,21 +418,15 @@ if __name__ == '__main__':
 
         mapf_funcs = [
             bound_mapf(graph, queries, timeout),
-            # conf_solver_mapf(graph, queries, timeout, fast=False),
-            # conf_solver_mapf(graph, queries, timeout, fast=True),
-            dd_mapf(graph, queries, timeout, DD_VARIANT.OPDD, repeat=1),
-            # dd_mapf(graph, queries, timeout, DD_VARIANT.OPDD, repeat=10),
-            # dd_mapf(graph, queries, timeout, DD_VARIANT.ONEMIN, max_depth=0, repeat=1),
-            # dd_solver_mapf(graph, queries, timeout, DD_VARIANT.OPDD),
+            dd_mapf(graph, queries, timeout, DD_VARIANT.OPDD, repeat=1000000000),
         ]
 
+        print(file_path)
+        print(20*'-')
         for mapf_func in mapf_funcs:
-            print(mapf_func)
             _ = mapf_func()
-            # print_kpaths(mapf_func.kpaths)
             verify_mapf(mapf_func.kpaths, queries)
-            print(mapf_func.span)
-            print(mapf_func.span/denom)
+            print(mapf_func, "span:", mapf_func.span, "SoD:", mapf_func.span/denom)
             filename = os.path.basename(file_path)
             file_stem, _ = os.path.splitext(filename)
             with open(OUT_DIR/f"{file_stem}.txt", 'a') as f:
@@ -717,21 +436,17 @@ if __name__ == '__main__':
 
     processes = list()
     for file in sorted(Path("./scenarios").iterdir()):
-    # for file in [Path("./scenarios/random-32-32-20-random-1.scen")]:
-    # for file in [Path("./scenarios/random-32-32-20-random-1.scen")]:
         if file.suffix != ".scen":
             continue
         print(file)
 
-        # if not any(file.name.startswith(x) for x in ['empty-48-48', 'random-32-32-20', 'maze-128-128-10', 'den312d', 'warehouse-10-20-10-2-2']):
-        #     continue
         if not any(file.name.startswith(x) for x in ['random-64-64-10']):
             continue
     # for file in ['new_instances/bier127_gen2_m3.txt']:
-        # evaluate(file)
-        p = Process(target=evaluate, args=(file, ))
-        processes.append(p)
-        p.start()
+        evaluate(file)
+        # p = Process(target=evaluate, args=(file, ))
+        # processes.append(p)
+        # p.start()
 
     for p in processes:
         p.join()
